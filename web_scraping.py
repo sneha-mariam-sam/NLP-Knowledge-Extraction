@@ -2,17 +2,6 @@ import csv
 import requests
 import bs4
 import re
-import json
-
-#from bs4 import BeautifulSoup
-from pprint import pprint
-from typing import Dict, List, Union
-
-
-import csv
-import requests
-import bs4
-import re
 from pprint import pprint
 from typing import Dict, List, Union
 
