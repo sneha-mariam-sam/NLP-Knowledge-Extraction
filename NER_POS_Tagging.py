@@ -4,92 +4,100 @@ import pandas as pd
 from bs4 import BeautifulSoup
 from collections import Counter
 
-#spacy.cli.download("en_core_web_sm")
-
+# Load NLP model
 nlp = spacy.load("en_core_web_sm")
 
-filename_ip = "./wikipedia_dump/1.txt"
+# -------------------------
+# Text Cleaning Function
+# -------------------------
 
-file_text = open(filename_ip, "r", encoding="utf8")
-title = file_text.readline().replace("\n","")
-#print(title)
+def clean_text(raw_text):
 
-#Cleaning text
+    text = BeautifulSoup(raw_text, "lxml").text
 
-file_text = BeautifulSoup(file_text, "lxml").text #remove html tags
-file_text = file_text.replace("\n\n","") #remove line breaks
-file_text = file_text.replace("[","").replace("]","") #remove square brackets
-file_text = re.sub(r"http\S+", "", file_text) #remove urls
-file_text = re.sub(r"==.*?==+", "", file_text) #remove headings
-file_text = re.sub(r"\{.*\}", "", file_text) #remove unnecessary information
-file_text = re.sub(r"[\,\'\"\*\=:\(\)|]", "", file_text) #remove punctuation
-file_text = file_text.replace("File:", "") #remove file:
+    text = text.replace("\n\n", "")
+    text = text.replace("[", "").replace("]", "")
 
-#print(file_text)
+    text = re.sub(r"http\S+", "", text)
+    text = re.sub(r"==.*?==+", "", text)
+    text = re.sub(r"\{.*\}", "", text)
+    text = re.sub(r"[\,\'\"\*\=:\(\)|]", "", text)
 
-file_doc = nlp(file_text)
+    return text
 
-#Problem 1
+# -------------------------
+# Named Entity Extraction
+# -------------------------
 
-#named entity recognition
-entities = []
-for ent in file_doc.ents:
-    entities.append(ent.text)
-#print(entities)
+def extract_named_entities(doc, title):
 
-#counting entities
-freq = Counter(entities)
-print(freq)
+    entities = [ent.text for ent in doc.ents]
 
-entities_set = set(entities)
-print(len(entities_set)) #total number of unique named entities
+    freq = Counter(entities)
 
-title_list = [title] * len(freq)
-named_entity = freq.keys()
-frequency = freq.values()
+    entity_data = [(title, entity, count)
+                   for entity, count in freq.items()]
 
-entity_list = list(zip(title_list, named_entity, frequency))
+    df = pd.DataFrame(
+        entity_data,
+        columns=["Title", "Named Entity", "Frequency"]
+    )
 
-print(entity_list)
+    return df
 
-#convert to dataframe
-entity_frame = pd.DataFrame(entity_list, columns=['Title', 'Named-entity', 'Frequency'])
+# -------------------------
+# POS Extraction
+# -------------------------
 
-print(entity_frame)
+def extract_pos_frequency(doc, title):
 
-filename_op = "./"+title.strip()+".csv"
-entity_frame.to_csv(filename_op, index=False)
+    pos_words = [
+        token.text
+        for token in doc
+        if not token.is_stop
+        and not token.is_punct
+        and token.pos_ in ["VERB", "ADJ"]
+    ]
 
-#Problem2.1
+    freq = Counter(pos_words)
 
-postype = []
-postext = []
-for token in file_doc:
-    postext.append(token.lemma_)
-    postype.append(token.pos_)
+    pos_data = [(title, word, count)
+                for word, count in freq.items()]
 
-verb_adj = [token.text
-         for token in file_doc
-         if (not token.is_stop and
-             not token.is_punct and
-             token.pos_ == "ADJ" or
-             token.pos_ == "VERB")]
+    df = pd.DataFrame(
+        pos_data,
+        columns=["Title", "Word", "Frequency"]
+    )
 
-#print(verb_adj)
+    return df
 
-verb_adj_freq = Counter(verb_adj)
-#print(verb_adj_freq)
+# -------------------------
+# Main Execution
+# -------------------------
 
-common_adj_verb = verb_adj_freq.most_common(1)
-#print(common_adj_verb)
+filename = "./wikipedia_dump/1.txt"
 
-pos_list = list(zip(title_list, postype, common_adj_verb, verb_adj_freq.values()))
+with open(filename, "r", encoding="utf8") as file:
 
-pos_frame = pd.DataFrame(pos_list, columns=['Title', 'POS Type', 'POS', 'Frequency'])
+    title = file.readline().strip()
 
-#print(pos_frame)
+    raw_text = file.read()
 
-pos_frame.to_csv("./Problem2_1.csv", index=False, mode='a', header=False)
+cleaned_text = clean_text(raw_text)
+
+doc = nlp(cleaned_text)
+
+entity_df = extract_named_entities(doc, title)
+
+pos_df = extract_pos_frequency(doc, title)
+
+# Save results
+entity_df.to_csv(f"{title}.csv", index=False)
+
+pos_df.to_csv("pos_frequency.csv", index=False)
+
+print("Named entities extracted:", len(entity_df))
+print("POS frequency extracted:", len(pos_df))
 
 #References used to solve the problems:
 #https://realpython.com/natural-language-processing-spacy-python/
