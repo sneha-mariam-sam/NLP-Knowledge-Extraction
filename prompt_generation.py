@@ -30,152 +30,100 @@ def initialize_lm(model_type, top_k):
     )  ### top_k defines the number of ranked output tokens to pick in the [MASK] position
     return nlp, tokenizer.mask_token
 
-def create_prompt(subject_entity, relation, mask_token):
-    ### depending on the relation, we fix the prompt
-    if relation == "CountryBordersWithCountry":
-        # prompt = f"{subject_entity} shares border with {mask_token}."
-        # prompt = f"{subject_entity} is surrounded by {mask_token}."
-        prompt = f"The neighbouring country of {subject_entity} is {mask_token}."
-    elif relation == "RiverBasinsCountry":
-        # prompt = f"{subject_entity} river basins in {mask_token}."
-        prompt = f"{subject_entity} river is a river basin in the country {mask_token}."
-        # prompt = f"The source of {subject_entity} lies in {mask_token}."
-    elif relation == "PersonLanguage":
-        prompt = f"{subject_entity} speaks in {mask_token}."
-        # prompt = f"{subject_entity} speaks {mask_token}."
-        # prompt = f"{subject_entity} speaks in {mask_token} language."
-    elif relation == "PersonProfession":
-        prompt = f"{subject_entity} is a {mask_token} by profession."
-        # prompt = f"{subject_entity} works as a {mask_token}."
-        # prompt = f"{subject_entity} is a {mask_token}."
-        # prompt = f"The profession of {subject_entity} is {mask_token}."
-    elif relation == "PersonInstrument":
-        prompt = f"{subject_entity} plays {mask_token}, which is an instrument."
-        # prompt = f"{subject_entity} plays musical instruments like {mask_token}."
-        # prompt = f"{subject_entity} plays an instrument called {mask_token}."
-    return prompt
+def create_prompt(subject_entity: str, relation: str, mask_token: str) -> str:
+    """
+    Create relation-specific prompt with [MASK] token.
+    """
+    relation_prompts = {
+        "CountryBordersWithCountry": f"The neighbouring country of {subject_entity} is {mask_token}.",
+        "RiverBasinsCountry": f"{subject_entity} river is a river basin in the country {mask_token}.",
+        "PersonLanguage": f"{subject_entity} speaks in {mask_token}.",
+        "PersonProfession": f"{subject_entity} is a {mask_token} by profession.",
+        "PersonInstrument": f"{subject_entity} plays {mask_token}, which is an instrument."
+    }
 
-def probe_lm(model_type, top_k, relation, subject_entities, output_dir: Path):
-    
-    ### initializing the language model
-    nlp, mask_token = initialize_lm(model_type, top_k) 
-        
-    ### for every subject-entity in the entities list, we probe the LM using the below sample prompts
+    return relation_prompts.get(relation, f"{subject_entity} relates to {mask_token}.")
+
+# -------------------------
+# Probing LM
+# -------------------------
+def probe_lm(model_name: str, top_k: int, relation: str, subject_entities: list, output_dir: Path):
+    """
+    Probe masked LM for all subject entities for a given relation.
+    Save outputs with token probabilities to CSV.
+    """
+    nlp_pipeline, mask_token = initialize_lm(model_name, top_k)
     results = []
-    for subject_entity in subject_entities:
-        print(
-            "Probing the {} language model for {} (subject-entity) and {} relation".format(
-                model_type, subject_entity, relation
-            )
-        )
-        prompt = create_prompt(subject_entity, relation, mask_token) ### creating a specific prompt for the given relation
-        probe_outputs = nlp(prompt) ### probing the language model and obtaining the ranked tokens in the masked_position
 
-        ### saving the top_k outputs and the likelihood scores received with the sample prompt
-        for sequence in probe_outputs:
-            results.append(
-                {
-                    "Prompt": prompt,
-                    "SubjectEntity": subject_entity,
-                    "Relation": relation,
-                    "ObjectEntity": sequence["token_str"],
-                    "Probability": round(sequence["score"], 4),
-                }
-            )
+    for entity in subject_entities:
+        print(f"Probing {model_name} for {entity} ({relation})")
+        prompt = create_prompt(entity, relation, mask_token)
+        outputs = nlp_pipeline(prompt)
 
-    ### saving the prompt outputs separately for each relation type
-    results_df = pd.DataFrame(results).sort_values(
-        by=["SubjectEntity", "Probability"], ascending=(True, False)
-    )
+        for out in outputs:
+            results.append({
+                "Prompt": prompt,
+                "SubjectEntity": entity,
+                "Relation": relation,
+                "ObjectEntity": out["token_str"],
+                "Probability": round(out["score"], 4)
+            })
 
-    if output_dir.exists():
-        assert output_dir.is_dir()
-    else:
-        output_dir.mkdir(exist_ok=True, parents=True)
+    # Save raw prompt outputs
+    df = pd.DataFrame(results).sort_values(by=["SubjectEntity", "Probability"], ascending=[True, False])
+    output_dir.mkdir(parents=True, exist_ok=True)
+    df.to_csv(output_dir / f"{relation}.csv", index=False)
 
-    results_df.to_csv(output_dir / f"{relation}.csv", index=False)
+# -------------------------
+# Apply Probability Threshold
+# -------------------------
+def filter_by_probability(input_dir: Path, thresholds: list, relations: set, output_dir: Path):
+    """
+    Select predicted tokens based on probability thresholds.
+    """
+    output_dir.mkdir(parents=True, exist_ok=True)
 
-
-def your_solution(input_dir, prob_threshold, relations, output_dir: Path):
-    print("Running the your_solution method ...")
-
-    ### for each relation, we run the your_solution method
     for relation in relations:
         df = pd.read_csv(input_dir / f"{relation}.csv")
-        # df = df[
-        #     df["Probability"] >= prob_threshold
-        # ]  ### all the output tokens with >= 0.5 likelihood are chosen and the rest are discarded
+        thresh = thresholds[0] if (df["Probability"] >= thresholds[0]).any() else thresholds[1]
+        df_filtered = df[df["Probability"] >= thresh]
+        df_filtered.to_csv(output_dir / f"{relation}.csv", index=False)
 
-        df.loc[df['Probability'] >= prob_threshold[0], 'greaterThanThresh'] = True
-        df.loc[df['Probability'] < prob_threshold[0], 'lessThanThresh'] = True
-        
-        if len(df.loc[df["greaterThanThresh"] == True]):
-            df = df[df["Probability"] >= prob_threshold[0]]
-        else:
-            df = df[df["Probability"] >= prob_threshold[1]]
+# -------------------------
+# Main Solution
+# -------------------------
+def your_solution(input_dir: Path, prob_threshold: list, relations: set, output_dir: Path):
+    """
+    Filter the prompt outputs based on probability thresholds.
+    """
+    filter_by_probability(input_dir, prob_threshold, relations, output_dir)
 
-        if output_dir.exists():
-            assert output_dir.is_dir()
-        else:
-            output_dir.mkdir(exist_ok=True, parents=True)
-
-        df.to_csv(
-            output_dir / f"{relation}.csv", index=False
-        )  ### save the selected output tokens separately for each relation
-
-
+# -------------------------
+# CLI Entry Point
+# -------------------------
 def main():
-    parser = argparse.ArgumentParser(
-        description="Probe a Language Model and Run the Solution Method on Prompt Outputs"
-    )
-    parser.add_argument(
-        "--model_type",
-        type=str,
-        default="bert-base-uncased",
-        help="HuggingFace model name",
-    )
-    parser.add_argument(
-        "--input_dir",
-        type=str,
-        default="./dataset/test/",
-        help="input directory containing the subject-entities for each relation to probe the language model",
-    )
-    parser.add_argument(
-        "--prompt_output_dir",
-        type=str,
-        default="./prompt_output_bert_base_uncased/",
-        help="output directory to store the prompt output",
-    )
-    parser.add_argument(
-        "--solution_output_dir",
-        type=str,
-        default="./solution/",
-        help="output directory to store the solution output",
-    )
+    parser = argparse.ArgumentParser(description="Probe LM and generate relation outputs")
+    parser.add_argument("--model_type", type=str, default="bert-base-uncased", help="HuggingFace model name")
+    parser.add_argument("--input_dir", type=str, default="./dataset/test/", help="Input CSV directory")
+    parser.add_argument("--prompt_output_dir", type=str, default="./prompt_output/", help="Prompt outputs directory")
+    parser.add_argument("--solution_output_dir", type=str, default="./solution/", help="Filtered outputs directory")
     args = parser.parse_args()
-    print(args)
 
-    model_type = args.model_type
+    model_name = args.model_type
     input_dir = Path(args.input_dir)
-    prompt_output_dir = Path(args.prompt_output_dir)
-    solution_output_dir = Path(args.solution_output_dir)
+    prompt_dir = Path(args.prompt_output_dir)
+    solution_dir = Path(args.solution_output_dir)
 
-    top_k =200  ### picking the top 200 ranked prompt outputs in the [MASK] position
+    top_k = 200
+    prob_threshold = [0.3, 0.1]
 
-    ### call the prompt function to get output for each (subject-entity, relation)
+    # Probe LM for each relation
     for relation in RELATIONS:
-        entities = (
-            pd.read_csv(input_dir / f"{relation}.csv")["SubjectEntity"]
-            .drop_duplicates(keep="first")
-            .tolist()
-        )
-        probe_lm(model_type, top_k, relation, entities, prompt_output_dir)
+        entities = pd.read_csv(input_dir / f"{relation}.csv")["SubjectEntity"].drop_duplicates().tolist()
+        probe_lm(model_name, top_k, relation, entities, prompt_dir)
 
-    prob_threshold = [0.3, 0.1] ### setting the threshold to select the output tokens
-    # prob_threshold = 0.3
-    
-    ### run the your_solution method on the prompt outputs
-    your_solution(prompt_output_dir, prob_threshold, RELATIONS, solution_output_dir)
+    # Filter outputs by probability threshold
+    your_solution(prompt_dir, prob_threshold, RELATIONS, solution_dir)
 
 
 if __name__ == "__main__":
