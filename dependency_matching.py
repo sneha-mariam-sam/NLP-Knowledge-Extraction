@@ -15,148 +15,51 @@ from spacy.matcher import DependencyMatcher
 from nltk.corpus import wordnet as wn
 
 def your_typing_function(input_file, result_file):
-    
-    '''
-    This function reads the input file (e.g. test.tsv)
-    and does typing all given entity mentions.
-    The results is saved in the result file (e.g. results.tsv)
-    '''
-    fout = open(result_file, 'w', encoding='utf8')
-    fin = open(input_file, 'r', encoding='utf8')
-    for line in fin.readlines():
-        comps = line.rstrip().split("\t")
-        id = int(comps[0])
-        entity = comps[1]
-        sentence = comps[2]
 
-        nlp = spacy.load("en_core_web_sm")
-        matcher = DependencyMatcher(nlp.vocab)
+    nlp = spacy.load("en_core_web_sm")
+    matcher = DependencyMatcher(nlp.vocab)
 
-        types=[]
-        synsets_list = []
-        
-        doc = nlp(str(sentence))
-
-        # for token in doc: 
-        #     print(token.text, "-->",token.dep_,"-->", token.pos_)
-        # displacy.serve(doc, style="dep")
-
-        pattern = [
-        [  #for "IS", "WAS", "ARE", "WERE" with attribute and no amods or compounds
-            {
-                "RIGHT_ID": "anchor_root",       
-                "RIGHT_ATTRS": {"LEMMA": "be"}
-            },
-            {
-                "LEFT_ID": "anchor_root",
-                "REL_OP": ">",
-                "RIGHT_ID": "root_attr",
-                "RIGHT_ATTRS": {"DEP": "attr"},
-            }
+    pattern = [
+        [
+            {"RIGHT_ID": "anchor_root", "RIGHT_ATTRS": {"LEMMA": "be"}},
+            {"LEFT_ID": "anchor_root", "REL_OP": ">", "RIGHT_ID": "root_attr", "RIGHT_ATTRS": {"DEP": "attr"}}
         ],
-
-        [   #for "IS", "WAS", "ARE", "WERE" with attribute and no amods or compounds
-            {
-                "RIGHT_ID": "anchor_root",       
-                "RIGHT_ATTRS": {"LEMMA": "be"}
-            },
-            {
-                "LEFT_ID": "anchor_root",
-                "REL_OP": ">",
-                "RIGHT_ID": "root_attr",
-                "RIGHT_ATTRS": {"DEP": "attr"},
-            },
-            {
-                "LEFT_ID": "root_attr",
-                "REL_OP": ">",
-                "RIGHT_ID": "root_attr_modifier",
-                "RIGHT_ATTRS": {"DEP": {"IN": ["amod", "compound", "conj", "pobj"]}},
-            }
-        ],
-
-        [   #for "IS", "WAS", "ARE", "WERE" with attribute and no amods or compounds
-            {
-                "RIGHT_ID": "anchor_root",       
-                "RIGHT_ATTRS": {"LEMMA": "be"}
-            },
-            {
-                "LEFT_ID": "anchor_root",
-                "REL_OP": ">",
-                "RIGHT_ID": "root_attr",
-                "RIGHT_ATTRS": {"DEP": "attr"},
-            },
-            {
-                "LEFT_ID": "root_attr",
-                "REL_OP": ">",
-                "RIGHT_ID": "root_attr_prep",
-                "RIGHT_ATTRS": {"DEP": "prep"}
-            },
-            {
-                "LEFT_ID": "root_attr_prep",
-                "REL_OP": ">",
-                "RIGHT_ID": "root_attr_prep_pobj",
-                "RIGHT_ATTRS": {"DEP": "pobj"}
-            },
-            {
-                "LEFT_ID": "root_attr_prep_pobj",
-                "REL_OP": ">",
-                "RIGHT_ID": "root_attr_pobj_more",
-                "RIGHT_ATTRS": {"DEP": {"IN": ["compound", "amod"]}}
-            }
-        ],
-
-        [   #for "includes" with attribute and dobj and no conj
-        {
-            "RIGHT_ID": "root_include",
-            "RIGHT_ATTRS": {"ORTH": {"IN": ["include", "includes"]}}  
-        },
-        {
-            "LEFT_ID": "root_include",
-            "REL_OP": ">",
-            "RIGHT_ID": "include_dobj",
-            "RIGHT_ATTRS": {"DEP": {"IN": ["dobj", "nsubj"]}}
-        }
-        ],
-
-        [   #for "includes" with attribute and dobj and conj
-            {
-                "RIGHT_ID": "root_include",      
-                "RIGHT_ATTRS": {"ORTH": {"IN": ["include", "includes"]}}  
-            },
-            {
-                "LEFT_ID": "root_include",
-                "REL_OP": ">",
-                "RIGHT_ID": "include_dobj",
-                "RIGHT_ATTRS": {"DEP": {"IN": ["dobj", "nsubj"]}}
-            },
-            {
-                "LEFT_ID": "include_dobj",
-                "REL_OP": ">",
-                "RIGHT_ID": "dobj_conj",
-                "RIGHT_ATTRS": {"DEP": "conj"}
-            }
+        [
+            {"RIGHT_ID": "root_include", "RIGHT_ATTRS": {"LEMMA": "include"}},
+            {"LEFT_ID": "root_include", "REL_OP": ">", "RIGHT_ID": "include_dobj", "RIGHT_ATTRS": {"DEP": {"IN": ["dobj", "nsubj"]}}}
         ]
-        ]
+    ]
 
-        matcher.add("is_or_was", pattern)
-        matches = matcher(doc)
-        
-        if len(matches) != 0:
-            match_id, tokens = matches[0]
-            for ind in range(1, len(tokens)):
-                types.append(doc[tokens[ind]].text)
-            #     synsets = wn.synsets(doc[tokens[ind]].text) #getting the synonym sets
-            #     for syn in synsets:
-            #         hypernyms = syn.hypernyms() #getting the hypernyms of the synonyms
-            #         for hyp in hypernyms:
-            #             synsets_list += hyp.lemma_names()
-            #         synsets_list = list(set(synsets_list)) #final list of hypernyms
+    matcher.add("typing_patterns", pattern)
 
-            # types = (list(set(types + synsets_list)))
+    with open(input_file, 'r', encoding='utf8') as fin, \
+         open(result_file, 'w', encoding='utf8') as fout:
 
-        fout.write(str(id) + "\t" + str(types) + "\n")
-        
-    fout.close()
+        for line in fin:
+
+            comps = line.rstrip().split("\t")
+
+            if len(comps) != 3:
+                continue
+
+            sent_id = int(comps[0])
+            entity = comps[1]
+            sentence = comps[2]
+
+            doc = nlp(sentence)
+
+            types = []
+
+            matches = matcher(doc)
+
+            for match_id, tokens in matches:
+                for token_index in tokens[1:]:
+                    types.append(doc[token_index].lemma_)
+
+            types = list(set(types))
+
+            fout.write(str(sent_id) + "\t" + str(types) + "\n")
+
     
     
 '''
