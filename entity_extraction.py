@@ -17,212 +17,142 @@ from dateutil.parser import parse
 nlp = spacy.load('en_core_web_sm')
 
 def your_extracting_function(input_file, result_file):
-    
-    '''
-    This function reads the input file (e.g. input.csv)
-    and extracts the required information of all given entity mentions.
-    The results is saved in the result file (e.g. results.csv)
-    '''
+    """
+    Reads an input CSV file and extracts structured information about entities.
+    Saves the results to result_file in CSV format.
+    """
+
+    # Prepare CSV output
     with open(result_file, 'w', encoding='utf8', newline="") as fout:
         headers = ['entity','dateOfBirth','nationality','almaMater','awards','workPlaces']
-        writer = csv.writer(fout, quoting=csv.QUOTE_MINIMAL)
+        writer = csv.writer(fout)
         writer.writerow(headers)
-        
+
         with open(input_file, 'r', encoding='utf8') as fin:
             reader = csv.reader(fin)
+            next(reader)  # skip header row
 
-            # skipping header row
-            next(reader)
-            
             for row in reader:
-                entity = row[0]
-                abstract = row[1]
-                dateOfBirth, nationality, almaMater, awards, workPlace = [], [], [], [], []
-                
-                '''
-                baseline: adding a random value 
-                comment this out or remove this baseline 
-                '''
-                # dateOfBirth.append('1961-1-1')
-                # nationality.append('United States')
-                # almaMater.append('Johns Hopkins University')
-                # awards.append('Nobel Prize in Physics')
-                # workPlace.append('Johns Hopkins University')
-                
-                '''
-                extracting information 
-                '''
+                entity, abstract = row[0], row[1]
 
-                dateOfBirth += extract_dob(entity, abstract)
-                nationality += extract_nationality(entity, abstract)
-                almaMater += extract_almamater(entity, abstract)
-                awards += extract_awards(entity, abstract)
-                workPlace += extract_workpace(entity, abstract)
-                
-                writer.writerow([entity, str(dateOfBirth), str(nationality), str(almaMater), str(awards), str(workPlace)])
-        
-    
-'''
-date of birth extraction funtion
-'''    
+                doc = nlp(abstract)
 
-def extract_dob(entity, abstract, **kwargs):
+                # Extract information using refactored functions
+                dateOfBirth = extract_dob(doc)
+                nationality = extract_nationality(doc)
+                almaMater = extract_almamater(doc)
+                awards = extract_awards(doc)
+                workPlaces = extract_workplace(doc)
+
+                # Write comma-separated values; 'NA' if no data found
+                writer.writerow([
+                    entity,
+                    ",".join(dateOfBirth) if dateOfBirth else "NA",
+                    ",".join(nationality) if nationality else "NA",
+                    ",".join(almaMater) if almaMater else "NA",
+                    ",".join(awards) if awards else "NA",
+                    ",".join(workPlaces) if workPlaces else "NA"
+                ])
+
+# -------------------------
+# Extract Date of Birth
+# -------------------------
+def extract_dob(doc):
     dob = []
-    '''
-    === your code goes here ===
-    '''
+    matcher = Matcher(nlp.vocab)
 
-    doc = nlp(abstract)
-
-    # for token in doc:
-    #     print(token.text, token.pos_)
-
-    #possible patterns to find the date of birth from given abstract obtained after pos tagging
     patterns = [
-        [ 
-            {'LOWER':'born'},
-            {'POS':'NUM'},
-            {'POS':'PROPN'},
-            {'POS':'NUM'}
-        ],
-        [
-            {'LOWER':'born'},
-            {'POS':'PROPN'},
-            {'POS':'NUM'},
-            {'POS':'PUNCT', 'OP':'*'},
-            {'POS':'NUM'}
-        ]
+        [{'LOWER':'born'}, {'POS':'NUM'}, {'POS':'PROPN'}, {'POS':'NUM'}],
+        [{'LOWER':'born'}, {'POS':'PROPN'}, {'POS':'NUM'}, {'POS':'PUNCT','OP':'*'}, {'POS':'NUM'}]
     ]
-    
-    matcher = Matcher(nlp.vocab) 
-    matcher.add("matching", patterns) 
+    matcher.add("DOB", patterns)
     matches = matcher(doc)
 
-    if len(matches) != 0:
-        for ind in range(0,len(matches)):
-            token = doc[matches[ind][1]:matches[ind][2]]
-            date = parse(str(token[1:]))
-            dob.append(date.strftime('%Y-%m-%d')) #to convert date to format as in groundtruth.csv
+    for _, start, end in matches:
+        span = doc[start:end]
+        try:
+            date = parse(span.text)
+            dob.append(date.strftime('%Y-%m-%d'))
+        except:
+            continue
 
-    return dob
+    return list(set(dob))
 
-
-'''
-nationality extraction function
-'''
-def extract_nationality(entity, abstract, **kwargs):
+# -------------------------
+# Extract Nationality
+# -------------------------
+def extract_nationality(doc):
     nationality = []
-    '''
-    === your code goes here ===
-    '''
+    matcher = Matcher(nlp.vocab)
 
-    #list of countries and their adjectives (Example: American -> United States) stored in a dictionary
-    with open('demonyms.txt', encoding='utf8') as f:
-        country_dict = dict(filter(None, csv.reader(f)))
-    
-    doc = nlp(abstract)
+    # Load country dictionary (demonyms -> countries)
+    country_dict = {}
+    try:
+        with open('demonyms.txt', encoding='utf8') as f:
+            reader = csv.reader(f)
+            for row in reader:
+                if len(row) >= 2:
+                    country_dict[row[0].strip()] = row[1].strip()
+    except FileNotFoundError:
+        print("Warning: demonyms.txt not found. Nationality extraction may be incomplete.")
 
-    # for token in doc:
-    #     print(token.text, token.pos_)
-
-    #possible patterns to find the nationality from given abstract obtained after pos tagging
+    # Patterns to identify nationality in sentences
     patterns = [
-        [
-            {'LEMMA':'be'},
-            {'ORTH': {'IN': ['a', 'an']}},
-            {'POS':'ADJ'},
-            {'ORTH':'/', 'OP':'*'},
-            {'POS':'ADJ', 'OP':'*'},
-            {'POS':'NOUN'}
-        ],
-        [
-            {'LOWER':'born'},
-            {'LOWER':'in'},
-            {'POS':'PROPN'},
-            {'POS':'ADP', 'OP':'*'}
-        ]
+        [{'LEMMA':'be'}, {'ORTH': {'IN': ['a','an']}}, {'POS':'ADJ'}],
+        [{'LOWER':'born'}, {'LOWER':'in'}, {'POS':'PROPN'}, {'POS':'ADP','OP':'*'}]
     ]
-
-    matcher = Matcher(nlp.vocab) 
-    matcher.add("matching", patterns) 
+    matcher.add("Nationality", patterns)
     matches = matcher(doc)
 
-    if len(matches) != 0:
-        for ind in range(0,len(matches)):
-            token = doc[matches[ind][1]:matches[ind][2]]
-            words = re.split(" ", str(token))
-            for word in words:
-                if word[0].isupper() and word!='Born':
-                    if word in country_dict:
-                        nationality.append(country_dict[word].strip())
-                    else:
-                        nationality.append(word.strip())
+    for _, start, end in matches:
+        span = doc[start:end]
+        for word in span.text.split():
+            if word[0].isupper() and word.lower() != 'born':
+                nationality.append(country_dict.get(word, word))
 
     return list(set(nationality))
- 
 
-'''
-alma mater extraction function
-'''
-def extract_almamater(entity, abstract, **kwargs):
+# -------------------------
+# Extract Alma Mater
+# -------------------------
+def extract_almamater(doc):
     almaMater = []
-    '''
-    === your code goes here ===
-    '''
-    sentences = abstract.split(".")
+    keywords = ['graduated', 'educated', 'study', 'studied', 'degree', 'doctorate', 'scholarship', 'PhD', 'honorary', 'B.A.', 'B.S.']
 
-    verbs = ['graduated', 'educated', 'study', 'studied', 'degree', 'degrees', 'doctorate', 'scholarship', 'PhD','B.A.', 'former fellow', 'doctorates', 'honorary', 'B.S.']
-
-    for sent in sentences:
-        doc = nlp(sent)
-        res = [ele for ele in verbs if(ele in sent)] #finding only those sentences with the above verbs in them
-        if res:
-            for token in doc.ents:
-                if token.label_ == "ORG": #using NER to find organizations
-                    almaMater.append(token.text.replace("the","").strip())
+    for sent in doc.sents:
+        sent_text = sent.text.lower()
+        if any(k.lower() in sent_text for k in keywords):
+            for ent in sent.ents:
+                if ent.label_ == "ORG":
+                    almaMater.append(ent.text.replace("the","").strip())
 
     return list(set(almaMater))
 
-
-'''
-awards extracttion function
-'''
-def extract_awards(entity, abstract, **kwargs):
+# -------------------------
+# Extract Awards
+# -------------------------
+def extract_awards(doc):
     awards = []
-    '''
-    === your code goes here ===
-    '''
-    doc = nlp(abstract)
+    keywords = ['award','prize','medal','fellowship','emeritus','doctorate','preis']
 
-    words = ['Award','Prize','award','prize','Medal','doctorate', 'Fellowship', 'Emeritus','Preis']
-
-    for noun_chunk in doc.noun_chunks:
-        res = [ele for ele in words if(ele in noun_chunk.text)] #finding only those noun chunks which have the above words in them
-        if res:
-            awards.append(noun_chunk.text.replace("the","").strip())
+    for chunk in doc.noun_chunks:
+        chunk_text = chunk.text.lower()
+        if any(k.lower() in chunk_text for k in keywords):
+            awards.append(chunk.text.replace("the","").strip())
 
     return list(set(awards))
 
-
-'''
-workplace extraction function
-'''
-def extract_workpace(entity, abstract, **kwargs):
+# -------------------------
+# Extract Workplaces
+# -------------------------
+def extract_workplace(doc):
     workPlace = []
-    '''
-    === your code goes here ===
-    '''
+    keywords = ['work','worked','working','position','professor','lecturer','founder','university','college','laboratory','institute']
 
-    doc = nlp(abstract)
-
-    words = ['work', 'worked', 'working', 'inducted', 'position','working','Professor', 'Lecturer', 'Founder', 'University', 'College', 'Laboratory', 'Institute']
-    
-    for token in doc.ents:
-        res = [ele for ele in words if(ele in token.text)] #finding only those sentences which have above words
-        if res:
-            if token.label_ == "ORG": #using NER to find organizations
-                place = token.text.replace("the","").strip()
-                workPlace.append(place)
+    for ent in doc.ents:
+        ent_text = ent.text.lower()
+        if any(k.lower() in ent_text for k in keywords) and ent.label_ == "ORG":
+            workPlace.append(ent.text.replace("the","").strip())
 
     return list(set(workPlace))
 
