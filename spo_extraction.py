@@ -13,75 +13,110 @@ from spacy.util import filter_spans
 
 nlp = spacy.load("en_core_web_sm")
 
-def your_extracting_function(input_file, result_file):
-    
-    '''
-    This function reads the input file (e.g. sentences.tsv)
-    and extracts all SPO per line.
-    The results are saved in the result file (e.g. results.txt)
-    '''
+def your_extracting_function(input_file: str, result_file: str):
+    """
+    Reads sentences from input_file and extracts SPO triples.
+    Writes results to result_file.
+    """
+    with open(result_file, "w", encoding="utf8") as fout, open(input_file, "r", encoding="utf8") as fin:
+        line_id = 1
+        for line in fin:
+            line = line.strip()
+            if not line:
+                continue
 
-    with open(result_file, 'w', encoding='utf8') as fout:
-        with open(input_file, 'r', encoding='utf8') as fin:
-            id = 1
-            for line in fin:
-                line = line.rstrip()
-                
-                '''
-                baseline: running dependency, return head verb, nominal subject and directed object
-                comment out or remove when running your code
-                verbs = {key: {'subject': text, 'object': text}}
-                '''
-                #verbs = spo_baseline(line)
-                '''
-                end baseline
-                '''
+            doc = nlp(line)
+            verbs = {}
 
-                '''
-                Extracting SPO
-                === your code goes here ===
-                verbs = extract_spo(line)
-                '''
-                
-                verbs = {}
+            # Extract predicates (verbs)
+            predicates = get_predicates(doc)
+            if not predicates:
+                continue
 
-                doc = nlp(line)
+            # Choose the longest predicate as main
+            full_predicate = get_full_predicate(predicates)
+            key = str(full_predicate.root)
+            if key not in verbs:
+                verbs[key] = {"subject": "", "object": ""}
 
-                predicates = get_predicates(doc)
+            noun_chunks = list(doc.noun_chunks)
 
-                key = str(get_root(doc))
-                if(key not in verbs.keys()):
-                    verbs[key] = {"subject":"","object":""}
-                
-                non_predicates = doc.noun_chunks
-                full_predicate = None
+            subject = get_subject(full_predicate, noun_chunks)
+            object_ = get_object(full_predicate, noun_chunks)
 
-                if len(predicates) == 0:
-                    continue
-                elif len(predicates) > 1:
-                    full_predicate = get_full_predicate(list(predicates))
-                else:
-                    full_predicate = predicates[0]
+            verbs[key]["subject"] = str(subject)
+            verbs[key]["object"] = str(object_)
 
-                subject = get_subject(full_predicate, non_predicates)
-                object = get_object(full_predicate, non_predicates)
-                
-                verbs[key]["subject"] = str(subject)
-                verbs[key]["object"] = str(object)
-                
-                '''
-                formatting dict compatible with oie reader
-                '''
+            # Format output compatible with OIE reader
+            if subject and object_:
+                fout.write(line + "\n")
+                for k, v in verbs.items():
+                    fout.write(f'{line_id}\t"{v["subject"]}"\t"{k}"\t"{v["object"]}"\t0\n')
+                line_id += 1
 
-                if len(verbs) > 0:
-                    res = ''
-                    for key, value in verbs.items():
-                        if value['subject'] != '' and value['object'] != '':
-                            res += str(id) + '\t"' + value["subject"] + '"\t"' + key + '"\t"' + value["object"] + '"\t0\n'
-                    if res != '':
-                        fout.write(line + "\n")
-                        fout.write(res) 
-                        id += 1
+
+# -------------------------
+# Helper Functions
+# -------------------------
+def get_root(doc) -> spacy.tokens.Token:
+    """Return the root verb of the sentence."""
+    for token in doc:
+        if token.dep_ == "ROOT":
+            return token
+
+
+def check_root(predicate, root) -> bool:
+    """Check if the root verb is in the predicate span."""
+    return root.i >= predicate.start and root.i <= predicate.end
+
+
+def get_predicates(doc) -> List[spacy.tokens.Span]:
+    """
+    Match verb phrases in the sentence using SpaCy Matcher patterns.
+    Returns a list of predicate spans.
+    """
+    root = get_root(doc)
+
+    patterns = [
+        [{"POS": "AUX"}, {"POS": "VERB"}, {"POS": "ADP"}],
+        [{"POS": "NOUN"}, {"POS": "VERB"}, {"POS": "ADP", "OP": "*"}],
+        [{"POS": "NOUN", "OP": "*"}, {"POS": "SCONJ"}, {"POS": "VERB"}, {"POS": "ADP"}, {"POS": "DET", "OP": "*"}],
+        [{"POS": "VERB"}, {"POS": "NOUN", "OP": "*"}, {"POS": "ADP", "OP": "*"}, {"POS": "DET", "OP": "*"}],
+        [{"POS": "SCONJ"}, {"POS": "VERB"}, {"POS": "ADP"}],
+        [{"POS": "ADV"}, {"POS": "VERB"}, {"POS": "PRON", "OP": "*"}],
+        [{"POS": "VERB", "OP": "?"}, {"POS": "ADV", "OP": "*"}, {"POS": "VERB", "OP": "+"}]
+    ]
+
+    matcher = Matcher(nlp.vocab)
+    matcher.add("VerbPhrase", patterns)
+
+    matches = matcher(doc)
+    spans = [doc[start:end] for _, start, end in matches]
+
+    # Filter overlapping spans and check root presence
+    predicates = [span for span in filter_spans(spans) if check_root(span, root)]
+    return predicates
+
+
+def get_full_predicate(predicates: List[spacy.tokens.Span]) -> spacy.tokens.Span:
+    """Return the longest predicate span."""
+    return max(predicates, key=len)
+
+
+def get_subject(predicate: spacy.tokens.Span, noun_chunks: List[spacy.tokens.Span]):
+    """Return the noun chunk before the predicate as the subject."""
+    for chunk in noun_chunks:
+        if chunk.end <= predicate.start:
+            return chunk
+    return None
+
+
+def get_object(predicate: spacy.tokens.Span, noun_chunks: List[spacy.tokens.Span]):
+    """Return the noun chunk after the predicate as the object."""
+    for chunk in noun_chunks:
+        if chunk.start >= predicate.end:
+            return chunk
+    return None
 
 '''
 baseline implementation
@@ -98,108 +133,6 @@ def spo_baseline(line):
         elif(token.dep_ == "dobj" and token.head.pos_ == "VERB"):
             verbs[key]["object"] = token.text;
     return verbs
-
-    
-'''
-*** other code if needed
-'''    
-
-def get_root(doc):
-    #assuming that the verb is usually the root
-    for token in doc:
-        if (token.dep_ == "ROOT"):
-            return token
-
-def check_root(predicate, root):
-    #check if the root word is present in the predicate
-    start = predicate.start
-    end = predicate.end
-    if root.i >= start and root.i <= end:
-        return True
-    else:
-        return False
-
-def get_predicates(doc):
-    #match phrases with given patterns to obtain predicates
-    root = get_root(doc)
-
-    patterns = [
-        [
-            {"POS":"AUX"},
-            {"POS":"VERB"}, 
-            {"POS":"ADP"}
-        ], 
-        [
-            {"POS":"NOUN"},
-            {"POS":"VERB"},
-            {"POS":"PREP", "OP":"*"}
-        ],
-        [
-            {"POS":"NOUN", "OP":"*"},
-            {"POS":"SCONJ"},
-            {"POS":"VERB"},
-            {"POS":"ADP"},
-            {"POS":"DET", "OP":"*"}
-        ],
-        [
-            {"POS":"VERB"},
-            {"POS":"NOUN", "OP":"*"},
-            {"POS":"ADP", "OP":"*"},
-            {"POS":"DET", "OP":"*"}
-        ],
-        [
-            {"POS":"SCONJ"},
-            {"POS":"VERB"},
-            {"POS":"ADP"}
-        ],
-        [
-            {"POS":"ADV"},
-            {"POS":"VERB"},
-            {"POS":"PRON", "OP":"*"}
-        ],
-        [
-            {'POS': 'VERB', 'OP': '?'},
-            {'POS': 'ADV', 'OP': '*'},
-            {'POS': 'VERB', 'OP': '+'}
-        ]
-    ]
-
-    
-    phrases = []
-    
-    matcher = Matcher(nlp.vocab)
-    matcher.add("Verb phrase", patterns)
-
-    matches = matcher(doc)
-    spans = [doc[start:end] for _, start, end in matches]
-
-    for pred in filter_spans(spans):
-        if (check_root(pred, root)):
-            phrases.append(pred)
-
-    return phrases
-
-def get_full_predicate(predicates):
-    #find the full predicate for a given verb
-    length = 0
-    full_predicate = None
-    for predicate in predicates:
-        if len(predicate) > length:
-            full_predicate = predicate
-            
-    return full_predicate
-
-def get_subject(predicate, non_predicate):
-    #find subject if noun chunks are before the predicate
-    for phrase in non_predicate:
-        if phrase.start < predicate.start:
-            return phrase
-
-def get_object(predicate, non_predicate):
-    #find object if noun chunks are after the predicate
-    for phrase in non_predicate:
-        if phrase.start > predicate.start:
-            return phrase
       
 '''
 main function
